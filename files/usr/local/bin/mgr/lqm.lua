@@ -136,7 +136,7 @@ end
 function update_block(track)
     if should_block(track) then
         track.blocked = true
-        if track.type == "Tunnel" then
+        if track.type == "Tunnel" or track.type == "Wireguard" then
             if not nft_handle("input_lqm", "iifname \\\"" .. track.device .. "\\\" udp dport 698 drop") then
                 os.execute(NFT .. " insert rule ip fw4 input_lqm iifname \\\"" .. track.device .. "\\\" udp dport 698 drop 2> /dev/null")
                 return "blocked"
@@ -149,7 +149,7 @@ function update_block(track)
         end
     else
         track.blocked = false
-        if track.type == "Tunnel" then
+        if track.type == "Tunnel" or track.type == "Wireguard" then
             local handle = nft_handle("input_lqm", "iifname \\\"" .. track.device .. "\\\" udp dport 698 drop")
             if handle then
                 os.execute(NFT .. " delete rule ip fw4 input_lqm handle " .. handle)
@@ -194,11 +194,8 @@ function canonical_hostname(hostname)
     return hostname
 end
 
-local cursor = uci.cursor()
-local cursorm = uci.cursor("/etc/config.mesh")
-
 local myhostname = canonical_hostname(info.get_nvram("node") or "localnode")
-local myip = cursor:get("network", "wifi", "ipaddr")
+local myip = uci.cursor():get("network", "wifi", "ipaddr")
 
 -- Clear old data
 local f = io.open("/tmp/lqm.info", "w")
@@ -222,7 +219,7 @@ end
 
 function lqm()
 
-    if cursor:get("aredn", "@lqm[0]", "enable") ~= "1" then
+    if uci.cursor():get("aredn", "@lqm[0]", "enable") ~= "1" then
         exit_app()
         return
     end
@@ -274,6 +271,9 @@ function lqm()
         now = nixio.sysinfo().uptime
 
         local config = get_config()
+
+        local cursor = uci.cursor()
+        local cursorm = uci.cursor("/etc/config.mesh")
 
         local lat = cursor:get("aredn", "@location[0]", "lat")
         local lon = cursor:get("aredn", "@location[0]", "lon")
@@ -398,7 +398,7 @@ function lqm()
                     local a, b, c, d = s.clientip:match("^(%d+)%.(%d+)%.(%d+)%.(%d+):")
                     d = tonumber(d) + 1
                     stations[#stations + 1] = {
-                        type = "Tunnel",
+                        type = "Wireguard",
                         device = "wgc" .. wgc,
                         signal = nil,
                         ip = string.format("%d.%d.%d.%d", a, b, c, d),
@@ -419,7 +419,7 @@ function lqm()
                 if s.enabled == "1" and s.netip:match(":") then
                     local a, b, c, d, _ = s.netip:match("^(%d+)%.(%d+)%.(%d+)%.(%d+):(%d+)$")
                     stations[#stations + 1] = {
-                        type = "Tunnel",
+                        type = "Wireguard",
                         device = "wgs" .. wgs,
                         signal = nil,
                         ip = string.format("%d.%d.%d.%d", a, b, c, d),
@@ -490,6 +490,7 @@ function lqm()
                         device = station.device,
                         firstseen = now,
                         lastseen = now,
+                        lastrouted = now,
                         pending = now + pending_timeout,
                         refresh = 0,
                         mac = station.mac,
@@ -689,6 +690,7 @@ function lqm()
                 local rt = track.ip and ip.route(track.ip) or nil
                 if rt and tostring(rt.gw) == track.ip then
                     track.routable = true
+                    track.lastrouted = now
                 else
                     track.routable = false
                 end
