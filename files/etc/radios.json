@@ -1218,4 +1218,7 @@
   "vmware": {
     "name": "VMware PC"
   }
+  "innotek": {
+    "name": "VirtualBox PC"
+  }
 }

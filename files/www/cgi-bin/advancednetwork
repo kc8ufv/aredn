@@ -62,7 +62,8 @@ local layouts = {
     ["mikrotik,hap-ac3"] = default_5_port_layout,
     ["glinet,gl-b1300"] = default_3_port_layout,
     ["qemu"] = default_n_port_layout,
-    ["vmware"] = default_n_port_layout
+    ["vmware"] = default_n_port_layout,
+    ["innotek"] = default_n_port_layout
 }
 
 local default_5_port_config = {
@@ -130,7 +131,8 @@ local default_configs = {
     ["mikrotik,hap-ac3"] = default_5_port_config,
     ["glinet,gl-b1300"] = default_3_port_config,
     ["qemu"] = default_1_port_config,
-    ["vmware"] = default_1_port_config
+    ["vmware"] = default_1_port_config,
+    ["innotek"] = default_1_port_config
 }
 
 function read_user_config(network)

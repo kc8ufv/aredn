@@ -52,13 +52,16 @@ function hardware.get_board()
         end
         board_json = json.parse(f:read("*a"))
         f:close()
-        -- Collapse virtualized hardware into the two basic types
+        -- Collapse virtualized hardware into the three basic types
         if board_json.model.id:match("^qemu%-") then
             board_json.model.id = "qemu"
             board_json.model.name = "QEMU"
         elseif board_json.model.id:lower():match("^vmware") then
             board_json.model.id = "vmware"
             board_json.model.name = "VMware"
+	elseif board_json.model.id:lower():match("^innotek" then
+	    board_json.model.id = "innotek"
+	    board_json.model.name = "VirtualBox"
         end
     end
     return board_json
