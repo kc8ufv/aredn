@@ -44,6 +44,7 @@ require("uci")
 aredn.info = require("aredn.info")
 aredn.olsr = require("aredn.olsr")
 require("iwinfo")
+require('luci.jsonc')
 
 local html = aredn.html
 
@@ -359,6 +360,16 @@ if nixio.fs.stat("/tmp/node.history") then
     end
 end
 
+function ac(a, b)
+    if not a or a == "" then
+        return b
+    elseif not b or b == "" then
+        return a
+    else
+        return a .. "," .. b
+    end
+end
+
 ------------------
 -- generate page
 ------------------
@@ -410,10 +421,10 @@ html.print([[
       width: 25%;
     }
     #nTable th:nth-child(2) {
-      width: 45%;
+      width: 50%;
     }
     #nTable th:nth-child(3) {
-      width: 30%;
+      width: 25%;
     }
     #cTable {
         margin-bottom: 12px;
@@ -422,19 +433,35 @@ html.print([[
       width: 25%;
     }
     #cTable th:nth-child(2), #rTable th:nth-child(2) {
-      width: 25%;
-    }
-    #cTable th:nth-child(3), #cTable th:nth-child(4) {
-      width: 6%;
-    }
-    #cTable th:nth-child(5) {
-      width: 8%;
-    }
-    #rTable th:nth-child(3) {
       width: 20%;
     }
+    #cTable th:nth-child(3), #cTable th:nth-child(4), #cTable th:nth-child(5) {
+        width: 4%;
+        padding: 0 2px 0 0;
+        text-align: right;
+      }
+    #cTable th:nth-child(6), #cTable th:nth-child(7), #cTable th:nth-child(8) {
+      width: 6%;
+      padding: 0 2px 0 0;
+      text-align: right;
+    }
+    #cTable td:nth-child(3), #cTable td:nth-child(4), #cTable td:nth-child(5), #cTable td:nth-child(6), #cTable td:nth-child(7), #cTable td:nth-child(8) {
+      text-align: right;
+      padding: 0 2px 0 0;
+    }
+    #cTable th:nth-child(9) {
+      width: 25%;
+    }
+    #rTable th:nth-child(3), #rTable td:nth-child(3) {
+      width: 4%;
+      padding: 0 2px 0 0;
+      text-align: right;
+    }
     #rTable th:nth-child(4) {
-      width: 30%;
+      width: 26%;
+    }
+    #rTable th:nth-child(5) {
+      width: 25%;
     }
     tr.s.f.nf {
         display: table-row;
@@ -509,7 +536,7 @@ end
 html.print("&nbsp;&nbsp;")
 html.print("<button type=button onClick='window.location=\"status\"' title='Return to the status page'>Quit</button>")
 html.print("&nbsp;&nbsp;")
-html.print("<input id=srch type=search autocorrect=off spellcheck=false placeholder='Search...' onkeyup='doSearch()' onsearch='doSearch()' onkeypress='event.keyCode == 13 && event.preventDefault()'>")
+html.print("<input id=srch type=search autocorrect=off spellcheck=false placeholder='Search...' onkeyup='doSearch()' onclick='doSearch()' onkeypress='event.keyCode == 13 && event.preventDefault()'>")
 html.print("</nobr><br><br>")
 
 if not next(localhosts) and not next(links) then
@@ -524,7 +551,7 @@ end
 
 html.print("<table id=nTable class=s>")
 html.print("<tr class=h>")
-html.print("<th width=25%>Node Name</th>")
+html.print("<th>Node Name</th>")
 html.print("<th>LAN Hostname</th>")
 html.print("<th>Service Name</th>")
 html.print("</tr>")
@@ -620,11 +647,24 @@ html.print("</table>")
 -- show current neighbors table
 
 html.print("<table id='cTable' class=s><tr class=h>")
-html.print("<th width=25%>Current Neighbors</th>")
+html.print("<th>Current Neighbors</th>")
 html.print("<th>LAN Hostname</th>")
-html.print("<th title='Percent of packets successfully received'>LQ</th><th title='Percent of packets successfully sent'>NLQ</th><th>TxMbps</th>")
+html.print("<th title='Percent of packets successfully received'>LQ</th><th title='Percent of packets successfully sent'>NLQ</th>")
+html.print("<th>SNR</th><th>Quality</th><th>TxMbps</th><th>Distance</th>")
 html.print("<th>Service Name</th>")
 html.print("</tr>")
+
+local trackers = {}
+local l = io.open("/tmp/lqm.info")
+if l then
+    local lqm = luci.jsonc.parse(l:read("*a"))
+    l:close()
+    for _, tracker in pairs(lqm.trackers)
+    do
+        trackers[tracker.ip] = tracker
+    end
+end
+local now = nixio.sysinfo().uptime
 
 local rows = {}
 local neighservices = {}
@@ -656,6 +696,8 @@ do
     local no_space_host = name:match("(.*%S)%s*$")
     local c1 = "<a href='http://" .. no_space_host .. ":8080/'>" .. localpart .. tactical .. "</a>"
     local nodeiface
+    local waniface
+    local lqmstatus
     if ipmain ~= ip then
         if links[ip].dtd then
             nodeiface = "dtd"
@@ -668,20 +710,60 @@ do
         end
     end
     if wangateway[ip] or wangateway[ipmain] then
-        if nodeiface then
-            nodeiface = nodeiface .. ",wan"
-        else
-            nodeiface = "wan"
-        end
+        waniface = "wan"
     end
-    if nodeiface then
-        c1 = c1 .. " &nbsp; <small>(" .. nodeiface .. ")</small>"
-    end
+
     local c2 = ""
     local c3 = string.format("%.0f%%", math.min(100, math.ceil(100 * link.lq * link.weight)))
     local c4 = string.format("%.0f%%", math.min(100, math.ceil(100 * link.nlq * link.weight)))
+    local c4b = ""
+    local c4c = ""
     local c5 = string.format("%s", link.mbps)
+    local c5b = ""
     local c6 = ""
+
+    -- lqm info
+    local track = trackers[ip]
+    if track and not (track.hidden or track.blocked) then
+        if not nodeiface and track.type == "RF" then
+            nodeiface = "rf"
+        end
+        if nodeiface == "tun" and track.type == "Wireguard" then
+            nodeiface = "wg"
+        end
+        if track.pending > now then
+            lqmstatus = "pending"
+        elseif track.routable then
+            lqmstatus = "active"
+        else
+            lqmstatus = "idle"
+        end
+        if track.snr > 0 then
+            c4b = track.snr
+            if track.rev_snr then
+                c4b = c4b .. "/" .. track.rev_snr
+            end
+        end
+        if track.quality then
+            c4c = track.quality .. "%"
+        end
+        if track.distance then
+            if true then
+                local v = track.distance * 0.000621371
+                if v > 1 then
+                    c5b = math.ceil(v) .. " miles"
+                elseif v > 0.5 then
+                    c5b = "1 mile"
+                end
+            else
+                c5b = math.ceil(track.distance * 0.001) .. " km"
+            end
+        end
+    end
+
+    if nodeiface or waniface or lqmstatus then
+        c1 = c1 .. "&nbsp;<small>(" .. ac(ac(nodeiface, waniface), lqmstatus) .. ")</small>"
+    end
 
     -- print node services if any
     if not neighservices[name] then
@@ -719,9 +801,69 @@ do
         end
     end
     -- Build this row
-    local row = "<tr class=s><td class='s f'>" .. c1 .. "</td><td class='s f'>" .. c2 .. "</td><td>" .. c3 .. "</td><td>" .. c4 .. "</td><td>" .. c5 .. "</td><td class='s f'>" .. c6 .. "</td></tr>"
-    rows[#rows + 1] = { key = name, row = row }
+    local row = "<tr class=s><td class='s f'>" .. c1 .. "</td><td class='s f'>" .. c2 .. "</td><td>" .. c3 .. "</td><td>" .. c4 .. "</td><td>" .. c4b .. "</td><td>" .. c4c .. "</td><td>" .. c5 .. "</td><td>" .. c5b .. "</td><td class='s f'>" .. c6 .. "</td></tr>"
+    rows[#rows + 1] = { key = name:lower(), row = row }
 end
+for _, track in pairs(trackers)
+do
+    if track.blocked then
+        local name = track.ip
+        if track.hostname then
+            name = track.hostname
+        end
+        local c1 = "<a href='http://" .. name:match("(.*%S)%s*$") .. ":8080/'>" .. name .. "</a>"
+        local c4c = ""
+        local c4b = ""
+        local c5b = ""
+        local type = ""
+        if track.type == "RF" then
+            type = "rf,"
+        end
+        if track.blocks.user then
+            c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked user)</small>"
+        elseif track.blocks.dtd then
+            c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked dtd)</small>"
+        elseif track.blocks.distance then
+            c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked distance)</small>"
+        elseif track.blocks.signal then
+            c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked signal)</small>"
+        elseif track.blocks.dup then
+            c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked dup)</small>"
+        elseif track.blocks.quality then
+            if track.tx_quality < track.ping_quality then
+                c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked retries)</small>"
+            else
+                c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked latency)</small>"
+            end
+        else
+            c1 = c1 .. "&nbsp;<small>(" .. type .. "blocked)</small>"
+        end
+        if track.snr > 0 then
+            c4b = track.snr
+            if track.rev_snr then
+                c4b = c4b .. "/" .. track.rev_snr
+            end
+        end
+        if track.quality then
+            c4c = track.quality .. "%"
+        end
+        if track.distance then
+            if true then
+                local v = track.distance * 0.000621371
+                if v > 1 then
+                    c5b = math.ceil(v) .. " miles"
+                elseif v > 0.5 then
+                    c5b = "1 mile"
+                end
+            else
+                c5b = math.ceil(track.distance * 0.001) .. " km"
+            end
+        end
+        local row = "<tr class=s><td class='s f'>" .. c1 .. "</td><td class='s f'></td><td></td><td></td><td>" .. c4b .. "</td><td>" .. c4c .. "</td><td></td><td>" .. c5b .. "</td><td class='s f'></td></tr>"
+        rows[#rows + 1] = { key = name:lower(), row = row }
+    end
+end
+
 if #rows > 0 then
     table.sort(rows, function(a,b) return a.key < b.key end)
     for _, row in ipairs(rows)
@@ -790,9 +932,9 @@ html.print("</table>")
 -- show remote node table
 
 html.print("<table id='rTable' class=s><tr class=h>")
-html.print("<th width=25%>Remote Nodes</th>")
+html.print("<th>Remote Nodes</th>")
 html.print("<th>LAN Hostname</th>")
-html.print("<th>ETX</th>")
+html.print("<th>ETX</th><th></th>")
 html.print("<th>Service Name</th>")
 html.print("</tr>")
 
@@ -810,6 +952,9 @@ do
             local etx = string.format("%.2f", host.etx)
             c1 = "<a href='http://" .. host.name .. ":8080/'>" .. localpart .. tactical .. "</a>"
             local nodeiface
+            local tuniface
+            local waniface
+            local hidden
             local mycount = 0
             if midcount[ip] then
                 mycount = midcount[ip]
@@ -825,21 +970,17 @@ do
                 mycount = mycount - 1
             end
             if mycount > 0 then
-                if nodeiface then
-                    nodeiface = nodeiface .. ",tun*" .. mycount
-                else
-                    nodeiface = "tun*" .. mycount
-                end
+                tuniface = "tun*" .. mycount
             end
             if wangateway[ip] then
-                if nodeiface then
-                    nodeiface = nodeiface .. ",wan"
-                else
-                    nodeiface = "wan"
-                end
+                waniface = "wan"
             end
-            if nodeiface then
-                c1 = c1 .. " &nbsp; <small>(" .. nodeiface .. ")</small>"
+            local track = trackers[ip]
+            if track and track.hidden then
+                hidden = "hidden"
+            end
+            if nodeiface or waniface then
+                c1 = c1 .. "&nbsp;<small>(" .. ac(ac(ac(nodeiface, tuniface), waniface), hidden) .. ")</small>"
             end
             c2 = "<br>"
             c3 = string.format("%s", etx)
@@ -893,8 +1034,8 @@ do
                 end
             end
             -- Build this row
-            local row = "<tr class=s><td class='s f'>" .. c1 .. "</td><td class='s f'>" .. c2 .. "</td><td>" .. c3 .. "</td><td class='s f'>" .. c4 .. "</td></tr>"
-            rows[#rows + 1] = { key = host.etx, row = row }
+            local row = "<tr class=s><td class='s f'>" .. c1 .. "</td><td class='s f'>" .. c2 .. "</td><td>" .. c3 .. "</td><td></td><td class='s f'>" .. c4 .. "</td></tr>"
+            rows[#rows + 1] = { key = string.format("%05d/%s", math.floor(100 * host.etx), host.name:lower()), row = row }
         end
     end
 end
@@ -905,24 +1046,24 @@ if #rows > 0 then
     do
         html.print(row.row)
     end
-    -- discard
-    rows = nil
 else
     html.print("<tr><td class='s f'>none</td></tr>")
 end
+
 -- discard
+rows = nil
 neighbor = nil
 dtd = nil
 midcount = nil
 xlinkcount = nil
 wangateway = nil
 services = nil
-
--- discard
+trackers = nil
 links = nil
 ipalias = nil
 hosts = nil
 history = nil
+
 -- end remote nodes table
 html.print("</table>")
 
